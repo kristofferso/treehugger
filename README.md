@@ -35,8 +35,45 @@ The prompt is copied to the clipboard when `pbcopy`, `clip`, `wl-copy`,
 6. Branch naming
 7. Own database per worktree
 8. Own dev ports per worktree
-9. Where the instructions go
-10. Language of the instructions
-11. Anything else the agent should know
+9. Optional skills to write as well (see below)
+10. Where the instructions go: `AGENTS.md`, `CLAUDE.md`, `.claude/skills/<name>/SKILL.md` or a path
+11. Language of the instructions
+12. Anything else the agent should know
 
 Requires Node 18 or newer. No dependencies.
+
+## Optional skills
+
+Every file in `skills/` shows up as a choice in question 9. The agent writes
+the chosen ones next to the worktree instructions, translated and adapted to
+the repository.
+
+| File | What it is |
+|---|---|
+| `skills/new-task.md` | Task workflow: worktree, mapping, clarifications, sketches, plan, approval, implementation, final report |
+
+### Adding one
+
+Add `skills/<name>.md`. No code changes.
+
+```markdown
+---
+name: pr-review
+question: PR review – one step at a time, ordered by data flow
+description: How a change is walked through for review. Use when the user asks to review a branch or PR.
+---
+
+# PR review
+
+...
+```
+
+- `name` is the skill's name, and its path when the instructions go in
+  `.claude/skills/<name>/SKILL.md`.
+- `question` is the line shown in the CLI.
+- `description` becomes the skill's frontmatter description.
+- The body is a template. Write it in English and keep it free of anything
+  specific to one project or person. Put what the agent must fill in as
+  `<placeholder>`, e.g. `<check command>`; the prompt tells the agent to
+  replace those and drop parts that do not apply.
+- Each line of the frontmatter is `key: value` on one line.

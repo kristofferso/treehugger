@@ -3,8 +3,12 @@
 // Questions go to stderr and the prompt to stdout, so `treehugger > prompt.md` works.
 
 import { spawnSync } from "node:child_process";
-import { basename, dirname } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+
+const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "skills");
 
 const rl = createInterface({ input: process.stdin, output: process.stderr });
 // An iterator instead of rl.question, so piped input is not dropped.
@@ -78,6 +82,35 @@ function copyToClipboard(text) {
   return null;
 }
 
+// skills/<name>.md: frontmatter with name, question and description, then the template.
+function loadSkills() {
+  const files = readdirSync(skillsDir).filter((file) => file.endsWith(".md")).sort();
+  return files.map((file) => {
+    const text = readFileSync(join(skillsDir, file), "utf8");
+    const match = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    if (!match) {
+      throw new Error(`skills/${file} has no frontmatter`);
+    }
+    const fields = {};
+    for (const line of match[1].split("\n")) {
+      const colon = line.indexOf(":");
+      fields[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+    }
+    return { ...fields, body: match[2].trim() };
+  });
+}
+
+async function chooseSkills(skills) {
+  if (skills.length === 0) {
+    return [];
+  }
+  process.stderr.write("Optional skills the agent should also write:\n");
+  skills.forEach((skill, i) => process.stderr.write(`  ${i + 1}) ${skill.question}\n`));
+  const answer = await ask("Numbers, comma separated, empty for none", "");
+  const picked = answer.split(/[\s,]+/).map((n) => skills[Number(n) - 1]);
+  return [...new Set(picked.filter(Boolean))];
+}
+
 async function collectAnswers() {
   const repo = repoName();
   process.stderr.write(`treehugger – fixed git worktrees for ${repo}\n\n`);
@@ -101,9 +134,16 @@ async function collectAnswers() {
   const database = await confirm("Own database per worktree", false);
   const ports = await confirm("Own dev ports per worktree", true);
 
-  const targets = ["AGENTS.md", "CLAUDE.md", ".claude/skills/worktrees/SKILL.md", "Other (type a path)"];
-  const target = await choose("Where should the agent write the worktree instructions?", targets);
-  let instructions = target.value;
+  const skills = await chooseSkills(loadSkills());
+
+  const targets = [
+    "AGENTS.md, one section each",
+    "CLAUDE.md, one section each",
+    ".claude/skills/<name>/SKILL.md",
+    "Other (type a file, or a path with <name>)",
+  ];
+  const target = await choose("Where should the agent write the instructions?", targets);
+  let instructions = target.value.split(",")[0];
   if (target.index === 3) {
     instructions = await ask("Path", "AGENTS.md");
   }
@@ -111,7 +151,7 @@ async function collectAnswers() {
   const language = await ask("Language of the instructions", "English");
   const notes = await ask("Anything else the agent should know", "");
 
-  return { repo, names, path, base, squash, branchNames, database, ports, instructions, language, notes };
+  return { repo, names, path, base, squash, branchNames, database, ports, skills, instructions, language, notes };
 }
 
 function section(condition, text) {
@@ -121,7 +161,43 @@ function section(condition, text) {
   return text;
 }
 
+function destination(a, name) {
+  if (a.instructions.includes("<name>")) {
+    return `\`${a.instructions.replace("<name>", name)}\``;
+  }
+  return `a \`${name}\` section in \`${a.instructions}\``;
+}
+
+function skillSection(a, skill) {
+  const frontmatter = section(
+    a.instructions.endsWith("SKILL.md"),
+    `\n\nFrontmatter \`description\`, in ${a.language}:\n\n> ${skill.description}`,
+  );
+  return `### ${skill.name}
+
+Write to ${destination(a, skill.name)}.${frontmatter}
+
+\`\`\`\`markdown
+${skill.body}
+\`\`\`\`
+`;
+}
+
+function skillsStep(a) {
+  if (a.skills.length === 0) {
+    return "";
+  }
+  return `
+## Step 5: Optional skills
+
+Write each template below in ${a.language}, adapted to this repository. Keep its rules. Replace every \`<placeholder>\` with this repository's real command, path or tool, and remove parts that do not apply (for example the issue tracker, if there is none). Where a template refers to the worktree instructions, point to where you wrote them in step 4.
+
+${a.skills.map((skill) => skillSection(a, skill)).join("\n")}`;
+}
+
 function buildPrompt(a) {
+  const skillNames = a.skills.map((skill) => skill.name);
+  const hasSkills = skillNames.length > 0;
   const first = a.names[0];
   const firstPath = a.path.replace("<name>", first);
   const insideRepo = !a.path.startsWith("../") && !a.path.startsWith("/");
@@ -138,6 +214,7 @@ function buildPrompt(a) {
 - Branch names: ${a.branchNames}
 - Own database per worktree: ${a.database ? "yes" : "no"}
 - Own dev ports per worktree: ${a.ports ? "yes" : "no"}
+- Optional skills: ${hasSkills ? skillNames.join(", ") : "none"}
 - Instructions go in: \`${a.instructions}\`
 - Language of the instructions: ${a.language}
 ${section(a.notes, `- Other: ${a.notes}\n`)}
@@ -163,7 +240,7 @@ Write a short plan:
 - Which files are symlinked from the main checkout, and which are real per-worktree files.
 - The full contents of \`${firstPath}/.env.worktree.local\`, with real values.
 - Every script change, as a diff.
-${section(a.database, `- Database per worktree: \`${a.repo}_<name>\`. The main checkout keeps its own.\n`)}${section(a.ports, `- Ports per worktree: the default port + 10·n, where n is the worktree's position (${a.names.slice(0, 2).map((name, i) => `${name}=${i + 1}`).join(", ")}, …). The main checkout keeps the defaults.\n`)}- Anything you could not decide.
+${section(a.database, `- Database per worktree: \`${a.repo}_<name>\`. The main checkout keeps its own.\n`)}${section(a.ports, `- Ports per worktree: the default port + 10·n, where n is the worktree's position (${a.names.slice(0, 2).map((name, i) => `${name}=${i + 1}`).join(", ")}, …). The main checkout keeps the defaults.\n`)}${section(hasSkills, "- For each optional skill in step 5: what you replace or remove to fit this repository.\n")}- Anything you could not decide.
 
 Stop and wait for approval.
 
@@ -171,13 +248,13 @@ Stop and wait for approval.
 
 After approval:
 
-1. Cut a branch from \`${a.base}\` in the main checkout. Commit the script changes${section(insideRepo, ", the .gitignore entry")} and the instructions from step 4 there. Ask before pushing.
+1. Cut a branch from \`${a.base}\` in the main checkout. Commit the script changes${section(insideRepo, ", the .gitignore entry")} and the instructions from ${hasSkills ? "steps 4 and 5" : "step 4"} there. Ask before pushing.
 2. For each worktree: \`git worktree add --detach <path> ${a.base}\`, create the symlinks (relative paths), write \`.env.worktree.local\`, install dependencies${section(a.database, ", create the database, migrate and seed")}.
 3. Check out the setup branch in \`${firstPath}\` and verify it: ${a.ports ? "start the dev servers and confirm they answer on the new ports" : "start the dev servers and confirm they answer"}${section(a.database, ", and confirm it uses its own database and that a reset there leaves the main checkout's database alone")}. Switch it back to \`--detach ${a.base}\` afterwards.
 
 ## Step 4: Write the instructions
 
-Write them to \`${a.instructions}\` in ${a.language}${section(a.instructions.endsWith("SKILL.md"), ", with `name` and `description` frontmatter so the agent loads it when a task starts or a PR is merged")}. Short, with exact commands for this repository. Cover:
+Write them to ${destination(a, "worktrees")} in ${a.language}${section(a.instructions.endsWith("SKILL.md"), ", with `name` and `description` frontmatter so the agent loads it when a task starts or a PR is merged")}. Short, with exact commands for this repository. Cover:
 
 **Layout.** Names and paths. What is symlinked and what is per worktree. How to add another worktree, with the commands from step 3. Tools that rewrite a shared env file run in the main checkout only.${section(a.database, " Without `.env.worktree.local` a worktree falls back to the main checkout's database, and reset wipes it: check the file exists before resetting.")}
 
@@ -212,7 +289,7 @@ ${section(a.squash, `
 **Stacking.** A branch built on another unmerged branch gets that branch as its PR base. Once the parent is merged: \`git rebase --onto ${a.base} <parent> <branch>\`.
 
 **Handoff.** When reporting finished work, give the worktree path and the branch.
-`;
+${skillsStep(a)}`;
 }
 
 const answers = await collectAnswers();

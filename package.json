@@ -6,7 +6,7 @@
   "bin": {
     "treehugger": "bin/treehugger.js"
   },
-  "files": ["bin"],
+  "files": ["bin", "skills"],
   "engines": {
     "node": ">=18"
   },
