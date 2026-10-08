@@ -1,65 +1,59 @@
-# treehugger
+# treehugger 🌳
 
-Asks a few questions about how you want git worktrees set up, then prints a
-prompt you paste into a coding agent (Claude Code, Codex, Cursor, …). The
-agent maps the repository, proposes a plan, waits for approval, sets up the
-worktrees and writes instructions for using them.
+Running several AI agents on the same repo at once gets messy fast: they
+trample each other's files, fight over ports, and wipe each other's database.
+Git worktrees fix that. Setting them up well is fiddly, though.
+
+treehugger asks you a few questions and hands you a prompt. Paste it into
+your coding agent (Claude Code, Codex, Cursor, whatever you use), and the
+agent sets everything up for your repo.
+
+## Try it
+
+From the root of your repo:
 
 ```
-npx github:<owner>/treehugger
+npx github:kristofferso/treehugger
 ```
 
-Run it from the repository you want to set up. Questions go to stderr and the
-prompt to stdout, so `npx github:<owner>/treehugger > prompt.md` also works.
-The prompt is copied to the clipboard when `pbcopy`, `clip`, `wl-copy`,
-`xclip` or `xsel` is available.
+Answer the questions (Enter takes the default). The prompt is printed and
+copied to your clipboard. Paste it into your agent.
 
-## The setup it describes
+The agent looks around your repo first, then shows you a plan and waits. It
+changes nothing until you say go.
 
-- A fixed number of permanent worktrees (`a`, `b`, `c` by default). A task gets
-  a new branch in a free worktree, never a new worktree.
-- Gitignored files every checkout needs are real files in the main checkout
-  and symlinks in the worktrees.
-- Values that differ per worktree (database, dev ports) go in a real,
-  gitignored `.env.worktree.local` per worktree, loaded last by the scripts.
-- Instructions for starting a task, cleaning up after merge, squash-merge
-  pitfalls and stacking, written to `AGENTS.md`, `CLAUDE.md` or a skill.
+## What you end up with
 
-## Questions
+- **A few permanent worktrees**, `a`, `b` and `c` by default. One agent per
+  worktree. You don't make a new worktree per task. You start a new branch in
+  a free one, so dependencies and env files are already there.
+- **Shared env files** stay in your main checkout. The worktrees symlink to
+  them, so you only update secrets in one place.
+- **Optional: own database and ports per worktree**, so three dev servers can
+  run side by side without stepping on each other.
+- **Instructions your agent follows**: how to start a task, how to clean up
+  after a merge, the squash-merge traps, stacked PRs. Written to `AGENTS.md`,
+  `CLAUDE.md` or as Claude Code skills, in the language you pick.
 
-1. How many worktrees
-2. Their names
-3. Where they live: `.worktrees/<name>`, `../<repo>-<name>`, `.claude/worktrees/<name>` or a path
-4. Which branch new branches start from (default: `origin/HEAD`)
-5. Whether PRs are squash-merged
-6. Branch naming
-7. Own database per worktree
-8. Own dev ports per worktree
-9. Optional skills to write as well (see below)
-10. Where the instructions go: `AGENTS.md`, `CLAUDE.md`, `.claude/skills/<name>/SKILL.md` or a path
-11. Language of the instructions
-12. Anything else the agent should know
+## Optional extras
 
-Requires Node 18 or newer. No dependencies.
+You can also have the agent write these:
 
-## Optional skills
+- **new-task**: a task workflow. The agent maps the task, asks clarifying
+  questions, shows a plan, waits for your OK, codes, and ends with a short
+  report on what was tested and what wasn't.
 
-Every file in `skills/` shows up as a choice in question 9. The agent writes
-the chosen ones next to the worktree instructions, translated and adapted to
-the repository.
+More are coming.
 
-| File | What it is |
-|---|---|
-| `skills/new-task.md` | Task workflow: worktree, mapping, clarifications, sketches, plan, approval, implementation, final report |
+## Add your own
 
-### Adding one
-
-Add `skills/<name>.md`. No code changes.
+Drop a markdown file in `skills/` and it shows up as an option. No code
+changes.
 
 ```markdown
 ---
 name: pr-review
-question: PR review – one step at a time, ordered by data flow
+question: PR review – one step at a time
 description: How a change is walked through for review. Use when the user asks to review a branch or PR.
 ---
 
@@ -68,12 +62,15 @@ description: How a change is walked through for review. Use when the user asks t
 ...
 ```
 
-- `name` is the skill's name, and its path when the instructions go in
-  `.claude/skills/<name>/SKILL.md`.
-- `question` is the line shown in the CLI.
-- `description` becomes the skill's frontmatter description.
-- The body is a template. Write it in English and keep it free of anything
-  specific to one project or person. Put what the agent must fill in as
-  `<placeholder>`, e.g. `<check command>`; the prompt tells the agent to
-  replace those and drop parts that do not apply.
-- Each line of the frontmatter is `key: value` on one line.
+- `name`: the skill's name.
+- `question`: the line shown in the CLI.
+- `description`: tells the agent when to use the skill.
+- The rest is a template. Keep it free of anything project-specific, and use
+  `<placeholders>` like `<test command>` for things the agent should fill in.
+
+PRs welcome.
+
+## Good to know
+
+- Needs Node 18 or newer. No dependencies.
+- Want the prompt in a file instead? `npx github:kristofferso/treehugger > prompt.md`
